@@ -117,3 +117,70 @@
       { energy-available: (+ current-energy new-energy), energy-price: energy-price })
     (print {event: "energy-updated", producer: tx-sender, new-total: (+ current-energy new-energy)})
     (ok true)))
+
+
+;; New public functions
+(define-public (rate-producer (producer principal) (rating uint))
+  (let (
+    (current-ratings (default-to (list) (map-get? producer-ratings producer)))
+    (current-reputation (default-to u0 (map-get? producer-reputation producer)))
+  )
+    (asserts! (and (>= rating u1) (<= rating u5)) (err err-invalid-rating))
+    (asserts! (> (default-to u0 (map-get? energy-purchased tx-sender)) u0) 
+              (err err-no-purchase-history))
+    
+    ;; Update ratings list (keep last 10)
+    (map-set producer-ratings producer 
+      (unwrap-panic (as-max-len? (concat (list rating) current-ratings) u10)))
+    
+    ;; Update reputation (simple average)
+    (map-set producer-reputation producer 
+      (/ (+ current-reputation rating) u2))
+    
+    (print {event: "producer-rated", producer: producer, rating: rating})
+    (ok true)))
+
+(define-public (request-refund (producer principal) (energy-amount uint))
+  (let (
+    (consumer-data (unwrap! (get-consumer-info tx-sender) (err err-no-purchase-history)))
+    (producer-data (unwrap! (get-producer-info producer) (err err-producer-not-found)))
+    (energy-price (get energy-price producer-data))
+    (refund-amount (* energy-amount energy-price))
+  )
+    (asserts! (<= energy-amount (get energy-consumed consumer-data)) 
+              (err err-refund-exceeds-purchase))
+    
+    ;; Process refund
+    (match (stx-transfer? refund-amount producer tx-sender)
+      success
+        (begin
+          ;; Update consumer records
+          (map-set consumers tx-sender 
+            { 
+              energy-consumed: (- (get energy-consumed consumer-data) energy-amount),
+              total-spent: (- (get total-spent consumer-data) refund-amount)
+            })
+          
+          ;; Update refund tracking
+          (map-set energy-refunds tx-sender 
+            (+ (default-to u0 (map-get? energy-refunds tx-sender)) energy-amount))
+          
+          ;; Update producer revenue
+          (map-set producer-revenue producer 
+            (- (default-to u0 (map-get? producer-revenue producer)) refund-amount))
+          
+          (print {event: "refund-processed", producer: producer, consumer: tx-sender, 
+                 amount: energy-amount, refund: refund-amount})
+          (ok true)
+        )
+      error (err err-stx-transfer-failed)
+    )))
+
+(define-public (withdraw-revenue)
+  (let (
+    (revenue (default-to u0 (map-get? producer-revenue tx-sender)))
+  )
+    (asserts! (> revenue u0) (err err-insufficient-funds))
+    (map-set producer-revenue tx-sender u0)
+    (print {event: "revenue-withdrawn", producer: tx-sender, amount: revenue})
+    (ok revenue)))
