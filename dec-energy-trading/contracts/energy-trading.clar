@@ -175,12 +175,3 @@
         )
       error (err err-stx-transfer-failed)
     )))
-
-(define-public (withdraw-revenue)
-  (let (
-    (revenue (default-to u0 (map-get? producer-revenue tx-sender)))
-  )
-    (asserts! (> revenue u0) (err err-insufficient-funds))
-    (map-set producer-revenue tx-sender u0)
-    (print {event: "revenue-withdrawn", producer: tx-sender, amount: revenue})
-    (ok revenue)))
